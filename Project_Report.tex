@@ -1,0 +1,286 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{setspace}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{fancyhdr}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  pdftitle={AI Emergency Command System - Technical Report},
+  pdfauthor={Solution Challenge Team}
+}
+
+\setstretch{1.15}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{AI Emergency Command System}
+\rhead{Technical Report}
+\cfoot{\thepage}
+
+\title{\textbf{AI Emergency Command System}\\\large End-to-End Technical Report}
+\author{Solution Challenge Project Team}
+\date{April 25, 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Executive Summary}
+This project implements an AI-assisted emergency operations pipeline that converts unstructured incident reports into structured operational intelligence. The system combines:
+\begin{itemize}[leftmargin=1.5em]
+  \item a FastAPI backend,
+  \item a Random Forest machine learning model for escalation prediction,
+  \item a Gemini large language model for triage and tactical generation tasks,
+  \item and a Next.js dashboard with Google Maps visualization.
+\end{itemize}
+
+The workflow supports four primary actions:
+\begin{enumerate}[leftmargin=1.5em]
+  \item analyze raw emergency text,
+  \item predict escalation risk,
+  \item generate auto-dispatch recommendations,
+  \item generate a tactical briefing for field command.
+\end{enumerate}
+
+\section{Problem Statement and Objectives}
+Emergency command workflows often receive chaotic, incomplete, and time-sensitive text input. The project objective is to reduce decision latency by building a decision-support stack that:
+\begin{itemize}[leftmargin=1.5em]
+  \item extracts structured incident fields from natural-language reports,
+  \item predicts whether the threat is likely to escalate,
+  \item recommends initial dispatch resource allocation,
+  \item and provides a concise command briefing.
+\end{itemize}
+
+\section{System Architecture}
+\subsection{High-Level Architecture}
+\begin{verbatim}
+Frontend (Next.js + React + Google Maps)
+    |
+    +--> POST /analyze-input       (LLM: triage + extraction)
+    +--> POST /predict-escalation  (ML: RandomForestClassifier)
+    +--> POST /auto-dispatch       (LLM: dispatch planning)
+    +--> POST /generate-briefing   (LLM: tactical summary)
+    |
+Backend (FastAPI + scikit-learn + Gemini SDK)
+\end{verbatim}
+
+\subsection{Backend Components}
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Framework:} FastAPI with async endpoints.
+  \item \textbf{Startup lifecycle:} ML model is trained once during app startup.
+  \item \textbf{CORS:} enabled for all origins to support local frontend integration.
+  \item \textbf{Data source:} CSV dataset at \texttt{backend/data/escalation\_dataset.csv}.
+\end{itemize}
+
+\subsection{Frontend Components}
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Input Panel:} receives emergency narrative text.
+  \item \textbf{Intel Panel:} displays triage category, risk score, dispatch recommendation, and final briefing.
+  \item \textbf{Map View:} plots incidents using Google Maps markers with severity-based color coding.
+  \item \textbf{Status Bar:} shows pipeline stage and system status.
+\end{itemize}
+
+\section{Detailed Processing Flow}
+\subsection{Flow Logic}
+\begin{enumerate}[leftmargin=1.5em]
+  \item User submits raw emergency text from dashboard.
+  \item Backend endpoint \texttt{/analyze-input} prompts Gemini to return strict JSON fields:
+  incident type, location, severity level, priority score, triage category, and reason.
+  \item Frontend maps extracted data to ML feature schema and calls \texttt{/predict-escalation}.
+  \item Backend model returns threat growth probability (\%) and risk-band interpretation.
+  \item Frontend calls \texttt{/auto-dispatch} to obtain tactical resource orders.
+  \item Frontend calls \texttt{/generate-briefing} to get command-ready text summary.
+  \item Results are rendered in the intelligence panel and mapped as an active incident marker.
+\end{enumerate}
+
+\subsection{Operational Pipeline Table}
+\begin{longtable}{p{0.23\linewidth} p{0.22\linewidth} p{0.24\linewidth} p{0.23\linewidth}}
+\toprule
+\textbf{Stage} & \textbf{Input} & \textbf{Engine} & \textbf{Output} \\
+\midrule
+Analyze Input & Raw incident text & Gemini prompt with START triage constraints & Structured incident JSON \\
+Predict Escalation & Structured features (7 fields) & RandomForestClassifier & Threat growth probability + risk statement \\
+Auto Dispatch & Incident JSON + resource list & Gemini dispatch prompt & Actionable dispatch order \\
+Generate Briefing & Incident + prediction + dispatch & Gemini briefing prompt & Tactical command briefing \\
+\bottomrule
+\end{longtable}
+
+\section{ML Model Design and Training}
+\subsection{Model Type}
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Algorithm:} \texttt{RandomForestClassifier}
+  \item \textbf{Library:} scikit-learn
+  \item \textbf{Hyperparameters in implementation:}
+  \begin{itemize}[leftmargin=1.5em]
+    \item \texttt{n\_estimators = 100}
+    \item \texttt{random\_state = 42}
+  \end{itemize}
+\end{itemize}
+
+\subsection{Feature Schema}
+The model is trained on 7 categorical features:
+\begin{enumerate}[leftmargin=1.5em]
+  \item incident\_type
+  \item location\_type
+  \item time\_of\_day
+  \item severity\_level
+  \item people\_trapped
+  \item hazardous\_material
+  \item resource\_availability
+\end{enumerate}
+Target label: \texttt{escalation} (yes/no).
+
+\subsection{Preprocessing}
+Each categorical feature and the target variable are encoded with \texttt{LabelEncoder}. The backend also includes unknown-category fallback logic during inference (unseen values map to encoded index 0).
+
+\subsection{Dataset Profile}
+Measured from the current dataset:
+\begin{itemize}[leftmargin=1.5em]
+  \item Total records: 500
+  \item Target distribution: 273 yes, 227 no
+\end{itemize}
+
+\section{Measured ML Performance}
+The following metrics were computed from the current dataset using a reproducible evaluation script.
+
+\subsection{Evaluation Setup}
+\begin{itemize}[leftmargin=1.5em]
+  \item Train-test split: 80:20, stratified, \texttt{random\_state = 42}
+  \item Additional validation: 5-fold stratified cross-validation
+\end{itemize}
+
+\subsection{Results}
+\begin{table}[h!]
+\centering
+\begin{tabular}{lr}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Training Accuracy & 0.9500 \\
+Test Accuracy & 0.6600 \\
+Precision (positive class) & 0.6981 \\
+Recall (positive class) & 0.6727 \\
+F1 Score (positive class) & 0.6852 \\
+5-Fold CV Mean Accuracy & 0.7020 \\
+5-Fold CV Std Dev & 0.0631 \\
+\bottomrule
+\end{tabular}
+\caption{Escalation model performance metrics}
+\end{table}
+
+\subsection{Confusion Matrix (Test Split)}
+\[
+\begin{bmatrix}
+29 & 16 \\
+18 & 37
+\end{bmatrix}
+\]
+where rows are true labels [no, yes] and columns are predicted labels [no, yes].
+
+\subsection{Interpretation}
+\begin{itemize}[leftmargin=1.5em]
+  \item The high training accuracy (0.95) compared to test accuracy (0.66) suggests overfitting risk.
+  \item Cross-validation mean around 0.70 indicates moderate generalization.
+  \item Current model is useful for risk signaling, but should not be treated as a sole decision authority.
+\end{itemize}
+
+\section{LLM Integration Details}
+\subsection{Model Used in Backend}
+\begin{itemize}[leftmargin=1.5em]
+  \item Gemini model ID configured in backend code: \texttt{gemini-2.5-flash}
+  \item SDK: \texttt{google-generativeai}
+\end{itemize}
+
+\subsection{LLM Responsibilities}
+\begin{enumerate}[leftmargin=1.5em]
+  \item \textbf{Triage analysis:} structured extraction and START category assignment.
+  \item \textbf{Dispatch planning:} resource allocation recommendation from incident context.
+  \item \textbf{Briefing generation:} concise command-ready tactical summary.
+\end{enumerate}
+
+\subsection{Prompt Engineering Strategy}
+\begin{itemize}[leftmargin=1.5em]
+  \item Hard output schema for JSON tasks to reduce parser failures.
+  \item Domain constraints embedded in prompt (hazmat, trapped persons, severity escalation rules).
+  \item Post-processing helper extracts valid JSON from either plain text or fenced responses.
+\end{itemize}
+
+\subsection{Implementation Note}
+The UI status text currently references ``GEMINI 2.0 FLASH'', while backend runtime configuration uses \texttt{gemini-2.5-flash}. This should be synchronized for consistency.
+
+\section{Google Maps API Integration}
+\subsection{Library and Key Usage}
+\begin{itemize}[leftmargin=1.5em]
+  \item React integration library: \texttt{@vis.gl/react-google-maps}
+  \item API key source: \texttt{NEXT\_PUBLIC\_GOOGLE\_MAPS\_API\_KEY}
+  \item Map components used: \texttt{APIProvider}, \texttt{Map}, \texttt{AdvancedMarker}, \texttt{Pin}
+\end{itemize}
+
+\subsection{Map Behavior}
+\begin{itemize}[leftmargin=1.5em]
+  \item Default map center is configured to Chennai, India.
+  \item Incidents are visualized as markers with severity-color mapping:
+  low (green), medium (amber), high (red), critical (violet).
+  \item Marker jitter/offset is applied to reduce overlap when multiple incidents are plotted near the same area.
+  \item If key is not configured, the UI gracefully displays a setup instruction panel.
+\end{itemize}
+
+\section{API Endpoints and Contracts}
+\begin{longtable}{p{0.22\linewidth} p{0.73\linewidth}}
+\toprule
+\textbf{Endpoint} & \textbf{Purpose} \\
+\midrule
+\texttt{POST /analyze-input} & Converts raw report text into structured fields and START triage classification. \\
+\texttt{POST /predict-escalation} & Predicts threat growth percentage and risk message using the trained Random Forest model. \\
+\texttt{POST /auto-dispatch} & Generates resource deployment action and tactical reason via Gemini. \\
+\texttt{POST /generate-briefing} & Produces concise tactical briefing text for commanders. \\
+\texttt{GET /health} & Service health and model load status check. \\
+\bottomrule
+\end{longtable}
+
+\section{How It Was Built (Implementation Narrative)}
+\begin{enumerate}[leftmargin=1.5em]
+  \item Defined operational target: transform narrative emergency text into actionable intelligence.
+  \item Built backend API skeleton with FastAPI and clear endpoint separation by function.
+  \item Added Gemini integration for language-heavy tasks requiring contextual reasoning.
+  \item Designed and trained a tabular ML classifier on escalation dataset for quantitative risk scoring.
+  \item Implemented startup training lifecycle so model is loaded before first prediction request.
+  \item Built frontend dashboard with sequential orchestration across all four backend stages.
+  \item Added map visualization for command situational awareness.
+  \item Added status and reasoning panels for transparency and operator trust.
+\end{enumerate}
+
+\section{Current Limitations and Risks}
+\begin{itemize}[leftmargin=1.5em]
+  \item Categorical fallback for unseen labels currently defaults to class index 0; this may bias outputs.
+  \item Training and inference are based on synthetic/limited tabular features, reducing real-world nuance.
+  \item No explicit model versioning, drift detection, or calibration pipeline yet.
+  \item LLM output quality depends on prompt reliability and API availability.
+\end{itemize}
+
+\section{Recommended Next Improvements}
+\begin{enumerate}[leftmargin=1.5em]
+  \item Add held-out validation set tracking and periodic retraining with versioned artifacts.
+  \item Add probability calibration and threshold tuning for mission-dependent false-negative control.
+  \item Replace random map jitter with geocoded incident coordinates for true geospatial accuracy.
+  \item Add request logging and trace IDs to improve observability and post-incident auditability.
+  \item Align displayed LLM version text with backend runtime configuration.
+\end{enumerate}
+
+\section{Conclusion}
+The implemented system already demonstrates a full operational loop from incident intake to command briefing, combining both deterministic ML scoring and LLM-assisted reasoning. The measured accuracy indicates moderate predictive capability, suitable for decision support. With additional data, calibration, and observability hardening, this architecture can evolve into a robust emergency command intelligence platform.
+
+\end{document}
