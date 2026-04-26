@@ -1,27 +1,26 @@
+import { Space_Grotesk, Rajdhani } from "next/font/google";
 import "./globals.css";
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-ui",
+});
+
+const rajdhani = Rajdhani({
+  subsets: ["latin"],
+  variable: "--font-heading",
+  weight: ["500", "600", "700"],
+});
 
 export const metadata = {
   title: "AI Emergency Command System",
-  description:
-    "AI-powered emergency triage, escalation prediction, and dispatch command dashboard using Gemini and real-world protocols.",
+  description: "AI-powered tactical intelligence platform for emergency response",
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossOrigin="anonymous"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
-          rel="stylesheet"
-        />
-      </head>
-      <body className="antialiased">{children}</body>
+      <body className={`${spaceGrotesk.variable} ${rajdhani.variable}`}>{children}</body>
     </html>
   );
 }

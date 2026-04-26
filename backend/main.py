@@ -7,8 +7,13 @@ import os
 import json
 import re
 import traceback
+import secrets
+import hashlib
+import base64
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
+from typing import Any
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -19,6 +24,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
 
 import google.generativeai as genai
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from firebase_admin import credentials as firebase_credentials
+from firebase_admin import firestore
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -29,11 +38,32 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY not set in .env")
 
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+
 genai.configure(api_key=GEMINI_API_KEY)
 gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 CSV_PATH = DATA_DIR / "escalation_dataset.csv"
+FIREBASE_CREDENTIALS_PATH = Path(__file__).resolve().parent / "credentials.json"
+
+SEEDED_USERS = {
+    "admin@ecs.local": {
+        "password": "Admin@12345",
+        "role": "admin",
+        "name": "Command Admin",
+    },
+    "responder@ecs.local": {
+        "password": "User@12345",
+        "role": "user",
+        "name": "Field Responder",
+    },
+}
+
+firebase_enabled = False
+firebase_auth_enabled = False
+db = None
+USERS_COLLECTION = "users"
 
 # ---------------------------------------------------------------------------
 # ML Model — trained at startup
@@ -41,6 +71,140 @@ CSV_PATH = DATA_DIR / "escalation_dataset.csv"
 ml_model: RandomForestClassifier | None = None
 label_encoders: dict[str, LabelEncoder] = {}
 feature_columns: list[str] = []
+
+
+def init_firebase():
+    """Initialize Firebase Admin from local service account credentials."""
+    global firebase_enabled, firebase_auth_enabled, db
+
+    if firebase_admin._apps:
+        firebase_enabled = True
+        firebase_auth_enabled = True
+        db = firestore.client()
+        return
+
+    if not FIREBASE_CREDENTIALS_PATH.exists():
+        print(f"[WARN] Firebase credentials not found at {FIREBASE_CREDENTIALS_PATH}")
+        firebase_enabled = False
+        return
+
+    try:
+        cred = firebase_credentials.Certificate(str(FIREBASE_CREDENTIALS_PATH))
+        firebase_admin.initialize_app(cred)
+        firebase_enabled = True
+        db = firestore.client()
+        # Probe Firebase Auth configuration once at startup. If Auth is not enabled
+        # in the Firebase project, user seeding and token generation should be skipped.
+        try:
+            firebase_auth.get_user_by_email("__auth_probe__@ecs.local")
+            firebase_auth_enabled = True
+        except firebase_auth.UserNotFoundError:
+            firebase_auth_enabled = True
+        except Exception as auth_ex:
+            auth_err = str(auth_ex)
+            if (
+                "CONFIGURATION_NOT_FOUND" in auth_err
+                or "No auth provider found" in auth_err
+            ):
+                firebase_auth_enabled = False
+                print(
+                    "[WARN] Firebase Auth is not configured for this project. "
+                    "Enable Firebase Authentication (Email/Password) in console to use auth features."
+                )
+            else:
+                firebase_auth_enabled = False
+                print(f"[WARN] Firebase Auth probe failed: {auth_ex}")
+
+        print("[INFO] Firebase Admin initialized.")
+    except Exception as ex:
+        print(f"[WARN] Firebase init failed: {ex}")
+        firebase_enabled = False
+        firebase_auth_enabled = False
+        db = None
+
+
+def ensure_seeded_firebase_users():
+    """Create seeded users in Firebase Auth if they do not already exist."""
+    if not firebase_enabled or not firebase_auth_enabled:
+        return
+
+    for email, user in SEEDED_USERS.items():
+        try:
+            firebase_auth.get_user_by_email(email)
+        except firebase_auth.UserNotFoundError:
+            try:
+                firebase_auth.create_user(
+                    email=email,
+                    password=user["password"],
+                    display_name=user["name"],
+                )
+                print(f"[INFO] Seeded Firebase user created: {email}")
+            except Exception as ex:
+                print(f"[WARN] Failed creating seeded Firebase user {email}: {ex}")
+        except Exception as ex:
+            print(f"[WARN] Failed checking Firebase user {email}: {ex}")
+
+
+def _hash_password(password: str, salt: str | None = None) -> str:
+    """Return password hash in the format salt$hash."""
+    if salt is None:
+        salt = secrets.token_hex(16)
+
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        120_000,
+    ).hex()
+    return f"{salt}${digest}"
+
+
+def _verify_password(raw_password: str, stored_hash: str) -> bool:
+    try:
+        salt, _ = stored_hash.split("$", 1)
+        expected = _hash_password(raw_password, salt)
+        return secrets.compare_digest(expected, stored_hash)
+    except Exception:
+        return False
+
+
+def ensure_seeded_firestore_users():
+    """Persist seeded users in Firestore so credentials are in the real database."""
+    if not firebase_enabled or db is None:
+        return
+
+    for email, user in SEEDED_USERS.items():
+        email_key = email.strip().lower()
+        user_ref = db.collection(USERS_COLLECTION).document(email_key)
+        existing = user_ref.get()
+
+        if not existing.exists:
+            payload = {
+                "email": email_key,
+                "name": user["name"],
+                "role": user["role"],
+                "password_hash": _hash_password(user["password"]),
+                "status": "active",
+                "created_at": firestore.SERVER_TIMESTAMP,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+            user_ref.set(payload)
+            print(f"[INFO] Seeded Firestore user created: {email_key}")
+            continue
+
+        existing_data = existing.to_dict() or {}
+        update_payload = {
+            "email": email_key,
+            "name": existing_data.get("name") or user["name"],
+            "role": existing_data.get("role") or user["role"],
+            "status": existing_data.get("status") or "active",
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+
+        if not existing_data.get("password_hash"):
+            update_payload["password_hash"] = _hash_password(user["password"])
+
+        user_ref.set(update_payload, merge=True)
 
 
 def train_escalation_model():
@@ -89,6 +253,9 @@ def train_escalation_model():
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_firebase()
+    ensure_seeded_firestore_users()
+    ensure_seeded_firebase_users()
     train_escalation_model()
     yield
 
@@ -104,7 +271,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -172,6 +342,53 @@ class BriefingResponse(BaseModel):
     briefing: str
 
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    role: str
+    name: str
+    email: str
+    firebase_custom_token: str | None = None
+    expires_at: str
+
+
+class EmergencyCreateRequest(BaseModel):
+    incident_type: str = Field(..., min_length=2, max_length=80)
+    severity_level: str = Field(..., pattern=r"^(low|medium|high|critical)$")
+    lat: float = Field(..., ge=-90, le=90)
+    lng: float = Field(..., ge=-180, le=180)
+    description: str = Field(..., min_length=5, max_length=1000)
+
+
+class EmergencyResponse(BaseModel):
+    id: str
+    incident_type: str
+    severity_level: str
+    lat: float
+    lng: float
+    description: str
+    status: str
+    created_at: str | None = None
+
+
+class AnalyzeImageRequest(BaseModel):
+    image_base64: str = Field(..., min_length=1, description="Base64 encoded image data")
+    description: str = Field(..., min_length=1, description="Text description of the incident")
+
+
+class AnalyzeImageResponse(BaseModel):
+    incident_type: str
+    severity_level: str
+    priority_score: int
+    triage_category: str
+    image_analysis: str
+    reason: str
+
+
 # ---------------------------------------------------------------------------
 # Helper — call Gemini and parse JSON
 # ---------------------------------------------------------------------------
@@ -196,6 +413,32 @@ async def call_gemini(prompt: str) -> str:
     """Send prompt to Gemini and return text."""
     response = gemini_model.generate_content(prompt)
     return response.text
+
+
+async def call_gemini_with_image(prompt: str, image_base64: str) -> str:
+    """Send prompt with image to Gemini Vision API and return text."""
+    # Decode base64 to get the image bytes (for validation)
+    try:
+        image_bytes = base64.b64decode(image_base64)
+    except Exception:
+        raise ValueError("Invalid base64 image data")
+    
+    # Create image part for the API
+    image_part = {
+        "mime_type": "image/jpeg",  # Assuming JPEG; could detect from base64 header
+        "data": image_base64,
+    }
+    
+    response = gemini_model.generate_content([prompt, image_part])
+    return response.text
+
+
+def _serialize_timestamp(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +484,55 @@ async def analyze_input(req: AnalyzeInputRequest):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# POST /api/analyze-image — Analyze image with Gemini Vision
+# ---------------------------------------------------------------------------
+IMAGE_ANALYZE_SYSTEM_PROMPT = """\
+You are an AI Emergency Triage Analyst specializing in visual incident assessment. You follow the START triage protocol.
+
+Given an image of an emergency scene and a text description, perform comprehensive analysis.
+
+START Protocol Triage Categories:
+- MINOR (Green): Walking wounded, minor injuries, can wait
+- DELAYED (Yellow): Serious but not life-threatening, can wait 1-3 hours
+- IMMEDIATE (Red): Life-threatening, needs care within 1 hour
+- CRITICAL/EXPECTANT (Black): Unlikely to survive even with treatment
+
+Visual Analysis Guidelines:
+- Assess visible damage, fire intensity, smoke, structural integrity
+- Count visible victims or signs of injury
+- Identify hazards (electrical, chemical, gas, water)
+- Evaluate scene accessibility and rescue difficulty
+- Note environmental conditions (weather, time of day visible in image)
+
+Respond ONLY with a valid JSON object (no markdown, no explanation):
+{
+  "incident_type": "<fire|flood|gas_leak|building_collapse|cyclone|hazmat|medical|vehicle_accident|other>",
+  "severity_level": "<low|medium|high|critical>",
+  "priority_score": <integer 1-100, 100 = highest>,
+  "triage_category": "<MINOR|DELAYED|IMMEDIATE|CRITICAL>",
+  "image_analysis": "<detailed visual assessment of what is seen in the image>",
+  "reason": "<brief combined reasoning from image and text description>"
+}
+"""
+
+
+@app.post("/api/analyze-image", response_model=AnalyzeImageResponse)
+async def analyze_image(req: AnalyzeImageRequest):
+    try:
+        prompt = (
+            f"{IMAGE_ANALYZE_SYSTEM_PROMPT}\n\n"
+            f"Text Description:\n{req.description}"
+        )
+        raw = await call_gemini_with_image(prompt, req.image_base64)
+        data = _extract_json(raw)
+        return AnalyzeImageResponse(**data)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Image analysis failed: {str(e)}")
+
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +659,155 @@ async def health():
     return {
         "status": "ok",
         "model_loaded": ml_model is not None,
+        "firebase_enabled": firebase_enabled,
+        "firebase_auth_enabled": firebase_auth_enabled,
     }
+
+
+@app.get("/config/google-maps-key")
+async def get_google_maps_key():
+    if not GOOGLE_MAPS_API_KEY:
+        raise HTTPException(status_code=404, detail="Google Maps API key not configured")
+    return {"apiKey": GOOGLE_MAPS_API_KEY}
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+async def login(req: LoginRequest):
+    email = req.email.strip().lower()
+    user_record: dict[str, Any] | None = None
+
+    if firebase_enabled and db is not None:
+        try:
+            doc = db.collection(USERS_COLLECTION).document(email).get()
+            if doc.exists:
+                user_record = doc.to_dict() or {}
+            else:
+                raise HTTPException(status_code=401, detail="Invalid email or password")
+        except HTTPException:
+            raise
+        except Exception as ex:
+            print(f"[WARN] Firestore login lookup failed for {email}: {ex}")
+            raise HTTPException(status_code=500, detail="Authentication service unavailable")
+    else:
+        # Fallback only when Firestore is unavailable.
+        fallback = SEEDED_USERS.get(email)
+        if not fallback or req.password != fallback["password"]:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        user_record = {
+            "email": email,
+            "name": fallback["name"],
+            "role": fallback["role"],
+        }
+
+    if user_record is None:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    stored_hash = user_record.get("password_hash")
+    if stored_hash:
+        if not _verify_password(req.password, stored_hash):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+    else:
+        # Backward-compatible path for any legacy plain-text field.
+        if req.password != user_record.get("password"):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        if firebase_enabled and db is not None:
+            db.collection(USERS_COLLECTION).document(email).set(
+                {
+                    "password_hash": _hash_password(req.password),
+                    "updated_at": firestore.SERVER_TIMESTAMP,
+                },
+                merge=True,
+            )
+
+    role = user_record.get("role")
+    name = user_record.get("name")
+
+    if role not in {"admin", "user"}:
+        raise HTTPException(status_code=403, detail="User role is invalid")
+
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=8)
+    access_token = secrets.token_urlsafe(32)
+
+    firebase_custom_token = None
+    if firebase_enabled and firebase_auth_enabled:
+        try:
+            firebase_user = firebase_auth.get_user_by_email(email)
+            firebase_custom_token = firebase_auth.create_custom_token(firebase_user.uid).decode("utf-8")
+        except Exception as ex:
+            print(f"[WARN] Failed generating Firebase custom token for {email}: {ex}")
+
+    return LoginResponse(
+        access_token=access_token,
+        role=role,
+        name=name,
+        email=email,
+        firebase_custom_token=firebase_custom_token,
+        expires_at=expires_at.isoformat(),
+    )
+
+
+@app.post("/api/emergencies", response_model=EmergencyResponse, status_code=201)
+async def create_emergency(req: EmergencyCreateRequest):
+    if not firebase_enabled or db is None:
+        raise HTTPException(status_code=503, detail="Firestore is not available")
+
+    payload = {
+        "incident_type": req.incident_type.strip(),
+        "severity_level": req.severity_level.lower(),
+        "lat": req.lat,
+        "lng": req.lng,
+        "description": req.description.strip(),
+        "status": "active",
+        "created_at": firestore.SERVER_TIMESTAMP,
+    }
+
+    try:
+        doc_ref = db.collection("emergencies").document()
+        doc_ref.set(payload)
+        saved = doc_ref.get().to_dict() or {}
+        return EmergencyResponse(
+            id=doc_ref.id,
+            incident_type=saved.get("incident_type", payload["incident_type"]),
+            severity_level=saved.get("severity_level", payload["severity_level"]),
+            lat=float(saved.get("lat", payload["lat"])),
+            lng=float(saved.get("lng", payload["lng"])),
+            description=saved.get("description", payload["description"]),
+            status=saved.get("status", "active"),
+            created_at=_serialize_timestamp(saved.get("created_at")),
+        )
+    except Exception as ex:
+        print(f"[WARN] Failed creating emergency document: {ex}")
+        raise HTTPException(status_code=500, detail="Failed to save emergency")
+
+
+@app.get("/api/emergencies", response_model=list[EmergencyResponse])
+async def list_active_emergencies():
+    if not firebase_enabled or db is None:
+        raise HTTPException(status_code=503, detail="Firestore is not available")
+
+    try:
+        docs = db.collection("emergencies").where("status", "==", "active").stream()
+        items: list[EmergencyResponse] = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            items.append(
+                EmergencyResponse(
+                    id=doc.id,
+                    incident_type=data.get("incident_type", "Unknown Incident"),
+                    severity_level=str(data.get("severity_level", "low")).lower(),
+                    lat=float(data.get("lat", 0)),
+                    lng=float(data.get("lng", 0)),
+                    description=data.get("description", ""),
+                    status=data.get("status", "active"),
+                    created_at=_serialize_timestamp(data.get("created_at")),
+                )
+            )
+
+        items.sort(key=lambda x: x.created_at or "", reverse=True)
+        return items
+    except Exception as ex:
+        print(f"[WARN] Failed reading emergencies: {ex}")
+        raise HTTPException(status_code=500, detail="Failed to fetch emergencies")
 
 
 # ---------------------------------------------------------------------------
