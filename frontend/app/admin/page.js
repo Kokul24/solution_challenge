@@ -60,8 +60,8 @@ function toDisplayIncident(raw) {
     lat,
     lng,
     details: String(raw?.description || "No description provided."),
-    createdAt: raw?.created_at || null,
-    updatedAt: raw?.updatedAt || null,
+    createdAt: raw?.createdAt || raw?.created_at || null,
+    updatedAt: raw?.updatedAt || raw?.updated_at || null,
     status: String(raw?.status || "pending"),
     priorityScore: raw?.priority_score ?? null,
     threatGrowth: raw?.threat_growth ?? null,
@@ -241,7 +241,7 @@ export default function AdminPage() {
       console.error("Failed to mark as read", e);
     }
     setShowNotifications(false);
-    setModalIncidentId(incident.id);
+    onIncidentClick(incident);
   }
 
   function onLogout() {
@@ -438,6 +438,11 @@ export default function AdminPage() {
   async function onIncidentClick(incident) {
     setSelectedId(incident.id);
     setModalIncidentId(incident.id);
+    
+    // Auto-generate AI Tactical Output if it hasn't been done yet
+    if (incident.priorityScore == null && incident.status === "pending") {
+      processIncident(incident).catch(console.error);
+    }
   }
 
   const tabs = [

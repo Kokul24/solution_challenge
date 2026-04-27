@@ -16,8 +16,8 @@ function hasFirebaseConfig() {
   const config = getFirebaseConfig();
   return Boolean(
     config.apiKey &&
-      config.projectId &&
-      config.appId
+    config.projectId &&
+    config.appId
   );
 }
 
