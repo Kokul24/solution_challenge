@@ -704,10 +704,12 @@ def _compute_priority_score(severity_level: str, threat_growth: float, created_a
     final_score = max(1, min(100, round(score)))
     
     calc_breakdown = {
+        "formula": "(severity_weight * 0.5) + (threat_growth * 0.3) + (time_urgency * 0.2) + noise",
         "severity_weight": str(round(severity_weight, 2)),
         "severity_component": str(round(severity_weight * 0.5, 2)),
         "escalation_component": str(round(float(threat_growth) * 0.3, 2)),
         "time_component": str(round(time_urgency * 0.2, 2)),
+        "noise_component": str(round(noise, 2)),
         "final_priority_score": str(final_score)
     }
     return final_score, calc_breakdown
