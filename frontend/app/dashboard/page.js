@@ -441,18 +441,21 @@ export default function UserDashboardPage() {
                 />
               </label>
 
-              <button
-                type="button"
-                className="btn"
-                aria-label="Voice input placeholder"
-                style={{ minHeight: 72, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 4, padding: "8px" }}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  textAlign: "center",
+                  padding: "0 12px",
+                  color: "#6b7280",
+                  fontSize: "0.85rem",
+                  lineHeight: 1.4,
+                  minHeight: 72,
+                }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2a72ef" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
-                  <strong style={{ fontSize: "0.875rem" }}>Voice Input (Soon)</strong>
-                </div>
-                <span className="muted" style={{ fontSize: "0.7rem" }}>Speak to describe incident</span>
-              </button>
+                <strong>Important:</strong>&nbsp;You must provide your precise location to submit an emergency report.
+              </div>
 
               <button
                 type="button"

@@ -908,20 +908,6 @@ export default function AdminPage() {
                 ))}
               </div>
             </article>
-
-            {processingErrors[modalIncident.id] && (
-              <p style={{ margin: 0, color: "#d65276", fontSize: "0.78rem" }}>{processingErrors[modalIncident.id]}</p>
-            )}
-
-            <button
-              type="button"
-              className="btn btn-critical"
-              onClick={async () => { if (!modalIncident) return; await processIncident(modalIncident); }}
-              disabled={processingIncidentId === modalIncident.id}
-              style={{ ...buttonProportion, width: "100%", minHeight: 40, fontSize: "0.84rem" }}
-            >
-              {processingIncidentId === modalIncident.id ? "Processing..." : "Escalate Response Team"}
-            </button>
           </article>
         </div>
       )}
