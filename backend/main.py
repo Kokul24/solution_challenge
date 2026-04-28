@@ -28,13 +28,13 @@ from sklearn.preprocessing import LabelEncoder
 import google.generativeai as genai
 import firebase_admin
 from firebase_admin import auth as firebase_auth
-from firebase_admin import credentials as firebase_credentials
-from firebase_admin import firestore
+from firebase_admin import credentials, firestore, initialize_app
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 load_dotenv()
+print("ENV LOADED:", bool(os.getenv("FIREBASE_CREDENTIALS")))
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -75,8 +75,35 @@ label_encoders: dict[str, LabelEncoder] = {}
 feature_columns: list[str] = []
 
 
+def _load_firebase_credentials():
+    """Load Firebase service account credentials from env JSON or local file."""
+    raw_credentials = os.getenv("FIREBASE_CREDENTIALS")
+
+    if raw_credentials:
+        try:
+            service_account = json.loads(raw_credentials)
+        except json.JSONDecodeError as ex:
+            raise RuntimeError("FIREBASE_CREDENTIALS must be valid service account JSON") from ex
+
+        try:
+            return credentials.Certificate(service_account)
+        except Exception as ex:
+            raise RuntimeError("FIREBASE_CREDENTIALS is not a valid Firebase service account") from ex
+
+    if FIREBASE_CREDENTIALS_PATH.exists():
+        try:
+            return credentials.Certificate(str(FIREBASE_CREDENTIALS_PATH))
+        except Exception as ex:
+            raise RuntimeError("Local Firebase credentials.json is invalid") from ex
+
+    raise RuntimeError(
+        "Firebase credentials not found. Set FIREBASE_CREDENTIALS to the service account JSON "
+        f"or add a local credentials file at {FIREBASE_CREDENTIALS_PATH}."
+    )
+
+
 def init_firebase():
-    """Initialize Firebase Admin from local service account credentials."""
+    """Initialize Firebase Admin using env credentials in cloud or local file fallback."""
     global firebase_enabled, firebase_auth_enabled, db
 
     if firebase_admin._apps:
@@ -85,14 +112,9 @@ def init_firebase():
         db = firestore.client()
         return
 
-    if not FIREBASE_CREDENTIALS_PATH.exists():
-        print(f"[WARN] Firebase credentials not found at {FIREBASE_CREDENTIALS_PATH}")
-        firebase_enabled = False
-        return
-
     try:
-        cred = firebase_credentials.Certificate(str(FIREBASE_CREDENTIALS_PATH))
-        firebase_admin.initialize_app(cred)
+        cred = _load_firebase_credentials()
+        initialize_app(cred)
         firebase_enabled = True
         db = firestore.client()
         # Probe Firebase Auth configuration once at startup. If Auth is not enabled
@@ -119,10 +141,10 @@ def init_firebase():
 
         print("[INFO] Firebase Admin initialized.")
     except Exception as ex:
-        print(f"[WARN] Firebase init failed: {ex}")
         firebase_enabled = False
         firebase_auth_enabled = False
         db = None
+        raise RuntimeError(f"Firebase initialization failed: {ex}") from ex
 
 
 def ensure_seeded_firebase_users():

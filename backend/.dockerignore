@@ -1,0 +1,6 @@
+credentials.json
+.env
+__pycache__/
+venv/
+.venv/
+Dockerfile
