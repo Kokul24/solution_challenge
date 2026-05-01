@@ -2,7 +2,9 @@
 
 AI-powered emergency triage, escalation prediction, dispatch coordination, and tactical briefing system. Converts chaotic emergency inputs into structured intelligence using Gemini AI and real-world START protocol.
 
-**Live Deployment:** [Link](https://solution-challenge-delta.vercel.app/)
+**Live Deployment:** [Link](https://solution-challenge-delta.vercel.app/) 
+
+
 **Live Demo Video:** [Link](https://vimeo.com/1187396801?fl=ip&fe=ec)
 
 ---
@@ -97,6 +99,8 @@ npm run dev
 ```
 GEMINI_API_KEY=your_gemini_api_key
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
+FIREBASE_CREDENTIALS
+PORT
 ```
 
 ### Frontend (`frontend/.env.local`)
