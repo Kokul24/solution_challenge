@@ -2,8 +2,8 @@
 
 AI-powered emergency triage, escalation prediction, dispatch coordination, and tactical briefing system. Converts chaotic emergency inputs into structured intelligence using Gemini AI and real-world START protocol.
 
-**Live Deployment:** [https://solution-challenge-delta.vercel.app/](https://solution-challenge-delta.vercel.app/)
-**Live Demo Video:** [https://vimeo.com/1187396801?fl=ip&fe=ec](https://vimeo.com/1187396801?fl=ip&fe=ec)
+**Live Deployment:** [Link](https://solution-challenge-delta.vercel.app/)
+**Live Demo Video:** [Link](https://vimeo.com/1187396801?fl=ip&fe=ec)
 
 ---
 
@@ -70,9 +70,9 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Backend runs at: http://localhost:8000
 
-API docs at: http://localhost:8000/docs
+
+
 
 ### 2. Frontend Setup
 
@@ -86,7 +86,7 @@ npm install
 npm run dev
 ```
 
-Frontend runs at: http://localhost:3000
+
 
 ---
 
